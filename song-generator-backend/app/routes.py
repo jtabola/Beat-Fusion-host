@@ -4,7 +4,6 @@ from flask import Flask, Blueprint, request, jsonify, url_for, send_from_directo
 from flask_cors import CORS
 from transformers import GPT2LMHeadModel, GPT2Tokenizer, AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 import scipy
-from torch.cuda.amp import autocast
 
 FOLDER_ID = "1z7uN0p7hpnf7TtnJndRfoa1WTNh0sg0m"
 OUTPUT_DIR = "models"
@@ -20,10 +19,6 @@ def download_model_folder():
 
 download_model_folder()
 
-print(torch.cuda.is_available())  # Should return True if CUDA is available
-print(torch.cuda.current_device())  # Check the current device (GPU)
-print(torch.cuda.get_device_name(torch.cuda.current_device()))  # Name of the GPU
-
 # Initialize Flask app
 app = Flask(__name__, static_folder='static')
 
@@ -31,13 +26,9 @@ app = Flask(__name__, static_folder='static')
 main = Blueprint('main', __name__, static_folder='static')
 CORS(main)
 
-# Set device to GPU if available, otherwise fall back to CPU
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Using device: {device}")
-
 # Load the fine-tuned GPT-2 model and tokenizer for lyrics generation
 gpt2_model_path = r"models\results_lyrics_final\checkpoint-319"
-gpt2_model = GPT2LMHeadModel.from_pretrained(gpt2_model_path).to(device)  # Move model to GPU
+gpt2_model = GPT2LMHeadModel.from_pretrained(gpt2_model_path)
 gpt2_tokenizer = GPT2Tokenizer.from_pretrained(gpt2_model_path)
 
 # Ensure the GPT-2 tokenizer has a padding token
@@ -47,7 +38,7 @@ if gpt2_tokenizer.pad_token is None:
 # Load the T5 model and tokenizer for title generation
 t5_model_path = r"models\local-title-model"
 t5_tokenizer = AutoTokenizer.from_pretrained(t5_model_path)
-t5_model = AutoModelForSeq2SeqLM.from_pretrained(t5_model_path).to(device)  # Move model to GPU
+t5_model = AutoModelForSeq2SeqLM.from_pretrained(t5_model_path)
 
 # Ensure the t5 tokenizer has a padding token
 if t5_tokenizer.pad_token is None:
@@ -57,7 +48,7 @@ if t5_tokenizer.pad_token is None:
 
 def generate_melody(genre, mood):
     try:
-        synthesiser = pipeline("text-to-audio", model="facebook/musicgen-small", device=0 if torch.cuda.is_available() else -1)
+        synthesiser = pipeline("text-to-audio", model="facebook/musicgen-small")
 
         music = synthesiser(f"{mood} {genre} music", forward_params={"do_sample": True})
         # Output path where the generated melody will be saved
@@ -74,9 +65,6 @@ def generate_melody(genre, mood):
 def generate_lyrics(prompt, max_length=250, temperature=0.8, top_k=50, top_p=0.75):
     # Tokenize the prompt on CPU to save GPU memory
     inputs = gpt2_tokenizer(prompt, return_tensors="pt").to('cpu')  # Move input tensors to CPU
-
-    # Move the tensors to GPU for generation
-    inputs = inputs.to(device)
 
     # Use torch.no_grad() to save memory during inference
     with torch.no_grad():
@@ -106,9 +94,6 @@ def generate_title(lyrics, max_length=8, num_beams=6):
     # Tokenize the input lyrics on CPU
     inputs = t5_tokenizer(prompt, return_tensors="pt", max_length=512, truncation=True).to('cpu')  # Move input tensors to CPU
     
-    # Move the tensors to GPU for generation
-    inputs = inputs.to(device)
-
     # Use torch.no_grad() to save memory during inference
     with torch.no_grad():
         # Generate a title using the T5 model
