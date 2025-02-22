@@ -1,23 +1,35 @@
 import torch, os
-import gdown
+import gdown, zipfile
 from flask import Flask, Blueprint, request, jsonify, url_for, send_from_directory
 from flask_cors import CORS
 from transformers import GPT2LMHeadModel, GPT2Tokenizer, AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 import scipy
 
-FOLDER_ID = "1z7uN0p7hpnf7TtnJndRfoa1WTNh0sg0m"
+FOLDER_ID = "1_NiHigBos9p6LpRQ2hImzu18Tj9apHr8"
 OUTPUT_DIR = "models"
+ZIP_FILE_PATH = os.path.join(OUTPUT_DIR, "model.zip")
 
-def download_model_folder():
+def download_and_unzip_model_folder():
     """Downloads the entire model folder from Google Drive."""
     if not os.path.exists(OUTPUT_DIR):
-        print("Downloading model from Google Drive...")
-        url = f"https://drive.google.com/uc?id={FOLDER_ID}"
-        gdown.download(url, OUTPUT_DIR, quiet=False)
-    else:
-        print("Model already exists. Skipping download.")
+        print("Models folder does not exist. Creating folder...")
+        os.makedirs(OUTPUT_DIR)  # Create output directory if it doesn't exist
 
-download_model_folder()
+        # Download the ZIP file
+        print("Downloading model ZIP file from Google Drive...")
+        url = f"https://drive.google.com/uc?id={FOLDER_ID}"
+        gdown.download(url, ZIP_FILE_PATH, quiet=False)
+
+        # Unzip the downloaded file
+        print("Unzipping the downloaded file...")
+        with zipfile.ZipFile(ZIP_FILE_PATH, 'r') as zip_ref:
+            zip_ref.extractall(OUTPUT_DIR)  # Extract to the output directory
+
+        print("Download and extraction complete.")
+    else:
+        print("Models folder already exists. Skipping download.")
+
+download_and_unzip_model_folder()
 
 # Initialize Flask app
 app = Flask(__name__, static_folder='static')
@@ -27,7 +39,7 @@ main = Blueprint('main', __name__, static_folder='static')
 CORS(main)
 
 # Load the fine-tuned GPT-2 model and tokenizer for lyrics generation
-gpt2_model_path = r"models\results_lyrics_final\checkpoint-319"
+gpt2_model_path = os.path.join(OUTPUT_DIR, "results_lyrics_final", "checkpoint-319")
 gpt2_model = GPT2LMHeadModel.from_pretrained(gpt2_model_path)
 gpt2_tokenizer = GPT2Tokenizer.from_pretrained(gpt2_model_path)
 
@@ -36,7 +48,7 @@ if gpt2_tokenizer.pad_token is None:
     gpt2_tokenizer.pad_token = gpt2_tokenizer.eos_token
 
 # Load the T5 model and tokenizer for title generation
-t5_model_path = r"models\local-title-model"
+t5_model_path = os.path.join(OUTPUT_DIR, "local-title-model")
 t5_tokenizer = AutoTokenizer.from_pretrained(t5_model_path)
 t5_model = AutoModelForSeq2SeqLM.from_pretrained(t5_model_path)
 
