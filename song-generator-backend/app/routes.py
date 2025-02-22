@@ -31,9 +31,6 @@ def download_and_unzip_model_folder():
 
 download_and_unzip_model_folder()
 
-# Initialize Flask app
-app = Flask(__name__, static_folder='static')
-
 # Set up Flask Blueprint and CORS
 main = Blueprint('main', __name__, static_folder='static')
 CORS(main)
