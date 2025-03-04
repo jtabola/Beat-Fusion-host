@@ -1,58 +1,15 @@
 import torch, os
-import gdown, zipfile
 from flask import Flask, Blueprint, request, jsonify, url_for, send_from_directory
 from flask_cors import CORS
 from transformers import GPT2LMHeadModel, GPT2Tokenizer, AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
-import scipy
+import scipy, re
 
-FOLDER_ID = "1_NiHigBos9p6LpRQ2hImzu18Tj9apHr8"
-OUTPUT_DIR = "models"
-ZIP_FILE_PATH = os.path.join(OUTPUT_DIR, "model.zip")
-
-def download_and_unzip_model_folder():
-    """Downloads the entire model folder from Google Drive."""
-    if not os.path.exists(OUTPUT_DIR):
-        print("Models folder does not exist. Creating folder...")
-        os.makedirs(OUTPUT_DIR)  # Create output directory if it doesn't exist
-
-        # Download the ZIP file
-        print("Downloading model ZIP file from Google Drive...")
-        url = f"https://drive.google.com/uc?id={FOLDER_ID}"
-        gdown.download(url, ZIP_FILE_PATH, quiet=False)
-
-        # Unzip the downloaded file
-        print("Unzipping the downloaded file...")
-        with zipfile.ZipFile(ZIP_FILE_PATH, 'r') as zip_ref:
-            zip_ref.extractall(OUTPUT_DIR)  # Extract to the output directory
-
-        print("Download and extraction complete.")
-    else:
-        print("Models folder already exists. Skipping download.")
-
-download_and_unzip_model_folder()
+# Initialize Flask app
+app = Flask(__name__, static_folder='static')
 
 # Set up Flask Blueprint and CORS
 main = Blueprint('main', __name__, static_folder='static')
 CORS(main)
-
-# Load the fine-tuned GPT-2 model and tokenizer for lyrics generation
-gpt2_model_path = os.path.join(OUTPUT_DIR, "results_lyrics_final", "checkpoint-319")
-gpt2_model = GPT2LMHeadModel.from_pretrained(gpt2_model_path)
-gpt2_tokenizer = GPT2Tokenizer.from_pretrained(gpt2_model_path)
-
-# Ensure the GPT-2 tokenizer has a padding token
-if gpt2_tokenizer.pad_token is None:
-    gpt2_tokenizer.pad_token = gpt2_tokenizer.eos_token
-
-# Load the T5 model and tokenizer for title generation
-t5_model_path = os.path.join(OUTPUT_DIR, "local-title-model")
-t5_tokenizer = AutoTokenizer.from_pretrained(t5_model_path)
-t5_model = AutoModelForSeq2SeqLM.from_pretrained(t5_model_path)
-
-# Ensure the t5 tokenizer has a padding token
-if t5_tokenizer.pad_token is None:
-    t5_tokenizer.pad_token = t5_tokenizer.eos_token
-
 
 
 def generate_melody(genre, mood):
@@ -71,51 +28,35 @@ def generate_melody(genre, mood):
         return None
 
 # Function to generate lyrics based on user input
-def generate_lyrics(prompt, max_length=250, temperature=0.8, top_k=50, top_p=0.75):
-    # Tokenize the prompt on CPU to save GPU memory
-    inputs = gpt2_tokenizer(prompt, return_tensors="pt").to('cpu')  # Move input tensors to CPU
+def generate_lyrics(prompt, max_length=800):
+    lyric_generator = pipeline("text2text-generation", model="nave1616/lyrics_model")
+    lyrics = lyric_generator(prompt, max_length=max_length, num_return_sequences=1, clean_up_tokenization_spaces=True)
+    
+    lyrics = lyrics[0]["generated_text"]
+    lyrics = lyrics[len(prompt):].strip()
 
-    # Use torch.no_grad() to save memory during inference
-    with torch.no_grad():
-        # Generate text using the GPT-2 model
-        outputs = gpt2_model.generate(
-            inputs["input_ids"],
-            max_length=max_length + len(inputs["input_ids"][0]),  # Account for prompt length
-            num_return_sequences=1, 
-            no_repeat_ngram_size=3,
-            temperature=temperature,
-            top_k=top_k,
-            top_p=top_p,
-            do_sample=True,
-            pad_token_id=gpt2_tokenizer.pad_token_id,
-            eos_token_id=gpt2_tokenizer.eos_token_id,
-        )
+    lyrics = lyrics.replace("[", "[")
+    lyrics = lyrics.replace("(", "[")
+    lyrics = lyrics.replace(")", "]")
 
-    # Decode the output, excluding the prompt
-    generated_text = gpt2_tokenizer.decode(outputs[0], skip_special_tokens=True)
-    return generated_text[len(prompt):].strip()  # Remove the prompt from the output
+    return lyrics
 
 # Function to generate a title from lyrics using the T5 model
-def generate_title(lyrics, max_length=8, num_beams=6):
-    # Prepend "summarize:" to indicate title generation
-    prompt = f"Summarize: {lyrics}"
+def generate_title(lyrics):
+
+    prompt = f"{lyrics}"
     
-    # Tokenize the input lyrics on CPU
-    inputs = t5_tokenizer(prompt, return_tensors="pt", max_length=512, truncation=True).to('cpu')  # Move input tensors to CPU
-    
-    # Use torch.no_grad() to save memory during inference
-    with torch.no_grad():
-        # Generate a title using the T5 model
-        summary_ids = t5_model.generate(
-            inputs["input_ids"],
-            max_length=max_length,
-            num_beams=num_beams,
-            early_stopping=True,
-            temperature=1.0
-        )
-    
-    # Decode and return the generated title
-    return t5_tokenizer.decode(summary_ids[0], skip_special_tokens=True)
+    tokenizer = AutoTokenizer.from_pretrained("Ateeqq/news-title-generator")
+    model = AutoModelForSeq2SeqLM.from_pretrained("Ateeqq/news-title-generator")
+
+    input_ids = tokenizer.encode(prompt, return_tensors="pt")
+    output = model.generate(input_ids,max_length=10)
+    decoded_text = tokenizer.decode(output[0], skip_special_tokens=True)
+
+    decoded_text = re.sub(r"[^\w\s]", "", decoded_text)
+
+    return decoded_text
+
 
 @main.route('/static/generated_music.wav', methods=['GET'])
 def serve_file():
